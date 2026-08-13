@@ -1,0 +1,13 @@
+FROM node:24-slim
+
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY package.json .
+RUN npm install
+COPY . .
+
+EXPOSE 8080
+ENV PORT=8080
+
+CMD ["node", "node_modules/@google-cloud/functions-framework/build/src/index.js", "--target=helloHttp"]
