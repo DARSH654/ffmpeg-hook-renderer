@@ -42,11 +42,12 @@ http('helloHttp', async (req, res) => {
   try {
     const { videoUrl, overlayText } = req.body || {};
     if (!videoUrl || !overlayText) {
+      console.error('[FFMPEG-RENDER-ERROR] Missing parameters');
       return res.status(400).json({ error: 'Missing required videoUrl or overlayText parameters.' });
     }
 
     const cleanVideoUrl = encodeURI(decodeURI(videoUrl));
-    console.log(`[FFMPEG-RENDER] Processing: "${cleanVideoUrl}"`);
+    console.log(`[FFMPEG-STEP 1/6] Processing Video URL: "${cleanVideoUrl}"`);
 
     const tmpDir = os.tmpdir();
     const ts = Date.now();
@@ -55,24 +56,29 @@ http('helloHttp', async (req, res) => {
     const fontPath = path.join(tmpDir, 'font.ttf');
     tempFiles.push(inputPath, outputPath);
 
-    // 1. Download font
-    if (!fs.existsSync(fontPath)) {
-      console.log('[FFMPEG-RENDER] Downloading Montserrat-Bold font...');
+    // 1. Download & validate font
+    if (!fs.existsSync(fontPath) || fs.statSync(fontPath).size === 0) {
+      console.log('[FFMPEG-STEP 2/6] Downloading Montserrat-Bold font...');
       const fontRes = await axios({
         url: 'https://cdn.jsdelivr.net/fontsource/fonts/montserrat@latest/latin-700-normal.ttf',
         responseType: 'arraybuffer'
       });
       fs.writeFileSync(fontPath, Buffer.from(fontRes.data));
+      console.log(`[FFMPEG-STEP 2/6] Font downloaded successfully. Size: ${fs.statSync(fontPath).size} bytes`);
+    } else {
+      console.log(`[FFMPEG-STEP 2/6] Using existing font file. Size: ${fs.statSync(fontPath).size} bytes`);
     }
 
     // 2. Download video
-    console.log('[FFMPEG-RENDER] Downloading input video...');
+    console.log('[FFMPEG-STEP 3/6] Downloading input video...');
     const videoRes = await axios({ url: cleanVideoUrl, method: 'GET', responseType: 'arraybuffer' });
     fs.writeFileSync(inputPath, Buffer.from(videoRes.data));
+    console.log(`[FFMPEG-STEP 3/6] Input video downloaded successfully. Size: ${fs.statSync(inputPath).size} bytes`);
 
     // 3. Wrap text into lines
     const { lines, wordCount } = wrapText(overlayText);
-    console.log(`[FFMPEG-RENDER] Words: ${wordCount} | Lines: ${lines.length}\n${lines.join('\n')}`);
+    console.log(`[FFMPEG-STEP 4/6] Word wrap calculation complete. Words: ${wordCount} | Lines: ${lines.length}`);
+    lines.forEach((l, idx) => console.log(`   Line ${idx + 1}: "${l}"`));
 
     // 4. Font size divisor calculation
     let fontSizeDivisor;
@@ -83,11 +89,11 @@ http('helloHttp', async (req, res) => {
     const N = lines.length;
     const D = fontSizeDivisor;
     const cleanFontPath = fontPath.replace(/\\/g, '/');
-
-    // 5. Compute concrete font size (prevents FFmpeg filter syntax crash)
     const calculatedFontSize = Math.round(1080 / D); 
 
-    // 6. Create temp text files for each line & build filter chain
+    console.log(`[FFMPEG-STEP 5/6] Calculated Font Size: ${calculatedFontSize}px (Divisor: ${D})`);
+
+    // 5. Create temp text files for each line & build filter chain
     const filters = lines.map((line, i) => {
       const textFilePath = path.join(tmpDir, `line_${ts}_${i}.txt`);
       fs.writeFileSync(textFilePath, line, 'utf8');
@@ -96,30 +102,53 @@ http('helloHttp', async (req, res) => {
       const cleanTextPath = textFilePath.replace(/\\/g, '/');
       const yExpr = `(h*0.72)-(${N}*${calculatedFontSize}*0.7)+(${i}*${calculatedFontSize}*1.4)`;
 
-      // Cleaned filter string without single quotes around paths and with evaluated integer fontsize
-      return `drawtext=fontfile=${cleanFontPath}:textfile=${cleanTextPath}:fontcolor=white:fontsize=${calculatedFontSize}:box=0:borderw=3:bordercolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${yExpr}`;
+      const filterStr = `drawtext=fontfile=${cleanFontPath}:textfile=${cleanTextPath}:fontcolor=white:fontsize=${calculatedFontSize}:box=0:borderw=3:bordercolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${yExpr}`;
+      console.log(`   Filter ${i + 1}: ${filterStr}`);
+      return filterStr;
     });
 
-    console.log('[FFMPEG-RENDER] Running FFmpeg render...');
+    // 6. Run FFmpeg with full debug event listeners
+    console.log('[FFMPEG-STEP 6/6] Spawning FFmpeg process...');
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
         .videoFilters(filters)
         .outputOptions(['-c:v libx264', '-pix_fmt yuv420p', '-c:a copy'])
-        .save(outputPath)
-        .on('end', resolve)
-        .on('error', reject);
+        .on('start', (commandLine) => {
+          console.log('[FFMPEG-EXEC-CMD] Executing FFmpeg command:');
+          console.log(commandLine);
+        })
+        .on('stderr', (stderrLine) => {
+          console.log(`[FFMPEG-STDERR] ${stderrLine}`);
+        })
+        .on('end', () => {
+          console.log('[FFMPEG-STEP 6/6] FFmpeg execution ended successfully.');
+          resolve();
+        })
+        .on('error', (err, stdout, stderr) => {
+          console.error('[FFMPEG-EXEC-FAILED] FFmpeg crashed.');
+          console.error('[FFMPEG-EXEC-FAILED-STDOUT]:', stdout);
+          console.error('[FFMPEG-EXEC-FAILED-STDERR]:', stderr);
+          reject(err);
+        })
+        .save(outputPath);
     });
 
-    console.log('[FFMPEG-RENDER] Render completed!');
+    console.log('[FFMPEG-RENDER] Render completed successfully!');
     const renderedBuffer = fs.readFileSync(outputPath);
     const base64Video = `data:video/mp4;base64,${renderedBuffer.toString('base64')}`;
 
     return res.status(200).json({ success: true, processedVideoUrl: base64Video });
 
   } catch (err) {
-    console.error('[FFMPEG-RENDER ERROR]:', err);
+    console.error('[FFMPEG-RENDER CATCH-ERROR]:', err);
     return res.status(500).json({ error: 'FFmpeg video rendering failed', details: err.message });
   } finally {
-    tempFiles.forEach(f => { try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {} });
+    tempFiles.forEach(f => {
+      try {
+        if (fs.existsSync(f)) {
+          fs.unlinkSync(f);
+        }
+      } catch (_) {}
+    });
   }
 });
