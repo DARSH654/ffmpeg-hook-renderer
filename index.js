@@ -5,18 +5,6 @@ import path from 'path';
 import os from 'os';
 import axios from 'axios';
 
-// Escape special characters for FFmpeg drawtext filter
-function escapeFFmpeg(text) {
-  return text
-    .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'")
-    .replace(/:/g, '\\:')
-    .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]')
-    .replace(/,/g, '\\,')
-    .replace(/;/g, '\\;');
-}
-
 // Word-wrap text into lines
 function wrapText(text) {
   const cleanText = text.trim();
@@ -94,13 +82,19 @@ http('helloHttp', async (req, res) => {
 
     const N = lines.length;
     const D = fontSizeDivisor;
-    const fontFileStr = fontPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+    const cleanFontPath = fontPath.replace(/\\/g, '/');
 
-    // 5. Build per-line drawtext filters using text= (no temp files)
+    // 5. Create temp text files for each line (prevents single-quote & escaping bugs)
     const filters = lines.map((line, i) => {
-      const escapedLine = escapeFFmpeg(line);
+      const textFilePath = path.join(tmpDir, `line_${ts}_${i}.txt`);
+      fs.writeFileSync(textFilePath, line, 'utf8');
+      tempFiles.push(textFilePath);
+
+      const cleanTextPath = textFilePath.replace(/\\/g, '/');
       const yExpr = `(h*0.72)-(${N}*(w/${D})*0.7)+(${i}*(w/${D})*1.4)`;
-      return `drawtext=fontfile='${fontFileStr}':text='${escapedLine}':fontcolor=white:fontsize=w/${D}:box=0:borderw=w/${D * 14}:bordercolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${yExpr}`;
+
+      // Fixed: borderw is set to an integer (3) instead of formula w/${D*14}
+      return `drawtext=fontfile='${cleanFontPath}':textfile='${cleanTextPath}':fontcolor=white:fontsize=w/${D}:box=0:borderw=3:bordercolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${yExpr}`;
     });
 
     console.log('[FFMPEG-RENDER] Running FFmpeg render...');
