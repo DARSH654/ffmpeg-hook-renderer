@@ -10,4 +10,4 @@ COPY . .
 EXPOSE 8080
 ENV PORT=8080
 
-CMD ["node", "node_modules/@google-cloud/functions-framework/build/src/index.js", "--target=helloHttp"]
+CMD ["node", "node_modules/.bin/functions-framework", "--target=helloHttp"]
