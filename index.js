@@ -74,7 +74,7 @@ http('helloHttp', async (req, res) => {
     const { lines, wordCount } = wrapText(overlayText);
     console.log(`[FFMPEG-RENDER] Words: ${wordCount} | Lines: ${lines.length}\n${lines.join('\n')}`);
 
-    // 4. Font size divisor
+    // 4. Font size divisor calculation
     let fontSizeDivisor;
     if (wordCount > 18) fontSizeDivisor = 20;
     else if (wordCount > 10) fontSizeDivisor = 17;
@@ -84,17 +84,20 @@ http('helloHttp', async (req, res) => {
     const D = fontSizeDivisor;
     const cleanFontPath = fontPath.replace(/\\/g, '/');
 
-    // 5. Create temp text files for each line (prevents single-quote & escaping bugs)
+    // 5. Compute concrete font size (prevents FFmpeg filter syntax crash)
+    const calculatedFontSize = Math.round(1080 / D); 
+
+    // 6. Create temp text files for each line & build filter chain
     const filters = lines.map((line, i) => {
       const textFilePath = path.join(tmpDir, `line_${ts}_${i}.txt`);
       fs.writeFileSync(textFilePath, line, 'utf8');
       tempFiles.push(textFilePath);
 
       const cleanTextPath = textFilePath.replace(/\\/g, '/');
-      const yExpr = `(h*0.72)-(${N}*(w/${D})*0.7)+(${i}*(w/${D})*1.4)`;
+      const yExpr = `(h*0.72)-(${N}*${calculatedFontSize}*0.7)+(${i}*${calculatedFontSize}*1.4)`;
 
-      // Fixed: borderw is set to an integer (3) instead of formula w/${D*14}
-      return `drawtext=fontfile='${cleanFontPath}':textfile='${cleanTextPath}':fontcolor=white:fontsize=w/${D}:box=0:borderw=3:bordercolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${yExpr}`;
+      // Cleaned filter string without single quotes around paths and with evaluated integer fontsize
+      return `drawtext=fontfile=${cleanFontPath}:textfile=${cleanTextPath}:fontcolor=white:fontsize=${calculatedFontSize}:box=0:borderw=3:bordercolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${yExpr}`;
     });
 
     console.log('[FFMPEG-RENDER] Running FFmpeg render...');
