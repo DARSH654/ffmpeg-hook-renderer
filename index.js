@@ -107,7 +107,7 @@ http('helloHttp', async (req, res) => {
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
         .videoFilters(filters)
-        .outputOptions(['-c:a copy'])
+        .outputOptions(['-c:v libx264', '-pix_fmt yuv420p', '-c:a copy'])
         .save(outputPath)
         .on('end', resolve)
         .on('error', reject);
