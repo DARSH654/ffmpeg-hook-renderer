@@ -82,7 +82,7 @@ http('helloHttp', async (req, res) => {
     // - 481 <= Width <= 900 (720p Benchmark) -> Font 36px, Border 4px, LineHeight 44px (LOCKED)
     // - 901 <= Width <= 1500 (1080p Full HD) -> Font 60px, Border 6px, LineHeight 72px
     // - Width > 1500 (4K/8K Ultra HD)       -> Font 110px, Border 10px, LineHeight 130px
-    const fontSizeExpr = `if(lte(w,480), 24, if(lte(w,900), 36, if(lte(w,1500), 60, 110)))`;
+    const fontSizeExpr = `if(lte(w,480), 24, if(lte(w,900), 36, if(lte(w,1500), 80, 110)))`;
     const borderExpr   = `if(lte(w,480), 3,  if(lte(w,900), 4,  if(lte(w,1500), 6,  10)))`;
     const lineHExpr    = `if(lte(w,480), 30, if(lte(w,900), 44, if(lte(w,1500), 72, 130)))`;
 
