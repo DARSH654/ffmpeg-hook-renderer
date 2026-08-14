@@ -77,20 +77,23 @@ http('helloHttp', async (req, res) => {
       lineFiles.push(lineFilePath.replace(/\\/g, '/').replace(/:/g, '\\:'));
     });
 
-    // Proportional Dynamic Scaling (w/20 for font, w/180 for border)
-    // 720p  -> 36px font, 4px border
-    // 1080p -> 54px font, 6px border
-    // 4K    -> 1080px font, 12px border
-    const N = wrappedLines.length;
+    // Tiered Resolution Font-Sizing Logic inside FFmpeg expressions:
+    // - Width <= 480 (Low/360p)             -> Font 24px, Border 3px, LineHeight 30px
+    // - 481 <= Width <= 900 (720p Benchmark) -> Font 36px, Border 4px, LineHeight 44px (LOCKED)
+    // - 901 <= Width <= 1500 (1080p Full HD) -> Font 60px, Border 6px, LineHeight 72px
+    // - Width > 1500 (4K/8K Ultra HD)       -> Font 110px, Border 10px, LineHeight 130px
+    const fontSizeExpr = `if(lte(w,480), 24, if(lte(w,900), 36, if(lte(w,1500), 60, 110)))`;
+    const borderExpr   = `if(lte(w,480), 3,  if(lte(w,900), 4,  if(lte(w,1500), 6,  10)))`;
+    const lineHExpr    = `if(lte(w,480), 30, if(lte(w,900), 44, if(lte(w,1500), 72, 130)))`;
+
     const startY = `(h*0.72)`;
 
     const videoFilters = lineFiles.map((linePath, i) => {
-      // Stacking offset scales dynamically with video width (lineHeight ≈ (w/20) * 1.25)
-      const yPos = `${startY}+(${i}*(w/20)*1.25)`;
-      return `drawtext=${fontOption}textfile='${linePath}':fontsize=w/20:fontcolor=white:borderw=w/180:bordercolor=black:x=(w-text_w)/2:y=${yPos}`;
+      const yPos = `${startY}+(${i}*${lineHExpr})`;
+      return `drawtext=${fontOption}textfile='${linePath}':fontsize=${fontSizeExpr}:fontcolor=white:borderw=${borderExpr}:bordercolor=black:x=(w-text_w)/2:y=${yPos}`;
     });
 
-    console.log(`[FFMPEG-RENDER] Rendering ${wrappedLines.length} lines with dynamic resolution scaling...`);
+    console.log(`[FFMPEG-RENDER] Rendering ${wrappedLines.length} lines with Tiered Resolution Font Sizing...`);
 
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
