@@ -70,9 +70,9 @@ http('helloHttp', async (req, res) => {
     // Calculate font size, border, line height based on width
     // Benchmark: 720px width = 36px font (perfect)
     // Formula: (videoWidth / 720) * 36
-    const fontSize   = Math.round((videoWidth / 720) * 54);
+    const fontSize   = Math.round((videoWidth / 720) * 36);
     const borderSize = Math.round((videoWidth / 720) * 4);
-    const lineHeight = Math.round((videoWidth / 720) * 66);
+    const lineHeight = Math.round((videoWidth / 720) * 44);
     console.log(`[FFMPEG-RENDER] Calculated fontSize: ${fontSize}px, border: ${borderSize}px, lineHeight: ${lineHeight}px`);
 
     // Resolve Montserrat Font
