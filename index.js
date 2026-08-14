@@ -77,21 +77,20 @@ http('helloHttp', async (req, res) => {
       lineFiles.push(lineFilePath.replace(/\\/g, '/').replace(/:/g, '\\:'));
     });
 
-    // Build FFmpeg Drawtext Filters for each line
-    // Fontsize = 36
-    // Black Border = 4px
-    // Horizontal = Centered (x=(w-text_w)/2)
-    // Vertical = Starts at 72% screen height, stacked cleanly line by line
-    const fontSize = 36;
-    const lineHeight = 44; // Spacing between stacked lines
+    // Proportional Dynamic Scaling (w/20 for font, w/180 for border)
+    // 720p  -> 36px font, 4px border
+    // 1080p -> 54px font, 6px border
+    // 4K    -> 1080px font, 12px border
+    const N = wrappedLines.length;
     const startY = `(h*0.72)`;
 
     const videoFilters = lineFiles.map((linePath, i) => {
-      const yPos = `${startY}+(${i * lineHeight})`;
-      return `drawtext=${fontOption}textfile='${linePath}':fontsize=${fontSize}:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=${yPos}`;
+      // Stacking offset scales dynamically with video width (lineHeight ≈ (w/20) * 1.25)
+      const yPos = `${startY}+(${i}*(w/20)*1.25)`;
+      return `drawtext=${fontOption}textfile='${linePath}':fontsize=w/20:fontcolor=white:borderw=w/180:bordercolor=black:x=(w-text_w)/2:y=${yPos}`;
     });
 
-    console.log(`[FFMPEG-RENDER] Rendering ${wrappedLines.length} lines of text with Montserrat font...`);
+    console.log(`[FFMPEG-RENDER] Rendering ${wrappedLines.length} lines with dynamic resolution scaling...`);
 
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
