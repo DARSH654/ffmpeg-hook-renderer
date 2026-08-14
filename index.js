@@ -23,6 +23,18 @@ function wrapText(text, maxCharsPerLine = 22) {
   return lines;
 }
 
+// Get video width using ffprobe
+function getVideoWidth(inputPath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+      if (err) return reject(err);
+      const videoStream = metadata.streams.find(s => s.codec_type === 'video');
+      if (!videoStream) return reject(new Error('No video stream found'));
+      resolve(videoStream.width);
+    });
+  });
+}
+
 http('helloHttp', async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -51,6 +63,18 @@ http('helloHttp', async (req, res) => {
     const videoRes = await axios({ url: cleanVideoUrl, method: 'GET', responseType: 'arraybuffer' });
     fs.writeFileSync(inputPath, Buffer.from(videoRes.data));
 
+    // Read actual video width using ffprobe
+    const videoWidth = await getVideoWidth(inputPath);
+    console.log(`[FFMPEG-RENDER] Detected video width: ${videoWidth}px`);
+
+    // Calculate font size, border, line height based on width
+    // Benchmark: 720px width = 36px font (perfect)
+    // Formula: (videoWidth / 720) * 36
+    const fontSize   = Math.round((videoWidth / 720) * 36);
+    const borderSize = Math.round((videoWidth / 720) * 4);
+    const lineHeight = Math.round((videoWidth / 720) * 44);
+    console.log(`[FFMPEG-RENDER] Calculated fontSize: ${fontSize}px, border: ${borderSize}px, lineHeight: ${lineHeight}px`);
+
     // Resolve Montserrat Font
     let fontPath = path.join(process.cwd(), 'Montserrat-Bold.ttf');
     if (!fs.existsSync(fontPath)) {
@@ -77,23 +101,14 @@ http('helloHttp', async (req, res) => {
       lineFiles.push(lineFilePath.replace(/\\/g, '/').replace(/:/g, '\\:'));
     });
 
-    // Tiered Resolution Font-Sizing Logic inside FFmpeg expressions:
-    // - Width <= 480 (Low/360p)             -> Font 24px, Border 3px, LineHeight 30px
-    // - 481 <= Width <= 900 (720p Benchmark) -> Font 36px, Border 4px, LineHeight 44px (LOCKED)
-    // - 901 <= Width <= 1500 (1080p Full HD) -> Font 60px, Border 6px, LineHeight 72px
-    // - Width > 1500 (4K/8K Ultra HD)       -> Font 110px, Border 10px, LineHeight 130px
-    const fontSizeExpr = `if(lte(w,480), 24, if(lte(w,900), 36, if(lte(w,1500), 80, 110)))`;
-    const borderExpr   = `if(lte(w,480), 3,  if(lte(w,900), 4,  if(lte(w,1500), 6,  10)))`;
-    const lineHExpr    = `if(lte(w,480), 30, if(lte(w,900), 44, if(lte(w,1500), 72, 130)))`;
-
     const startY = `(h*0.72)`;
 
     const videoFilters = lineFiles.map((linePath, i) => {
-      const yPos = `${startY}+(${i}*${lineHExpr})`;
-      return `drawtext=${fontOption}textfile='${linePath}':fontsize=${fontSizeExpr}:fontcolor=white:borderw=${borderExpr}:bordercolor=black:x=(w-text_w)/2:y=${yPos}`;
+      const yPos = `${startY}+(${i}*${lineHeight})`;
+      return `drawtext=${fontOption}textfile='${linePath}':fontsize=${fontSize}:fontcolor=white:borderw=${borderSize}:bordercolor=black:x=(w-text_w)/2:y=${yPos}`;
     });
 
-    console.log(`[FFMPEG-RENDER] Rendering ${wrappedLines.length} lines with Tiered Resolution Font Sizing...`);
+    console.log(`[FFMPEG-RENDER] Rendering ${wrappedLines.length} lines...`);
 
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
