@@ -5,6 +5,24 @@ import path from 'path';
 import os from 'os';
 import axios from 'axios';
 
+// Smart word-wrapping function (breaks text into ~22-25 char lines)
+function wrapText(text, maxCharsPerLine = 22) {
+  const words = text.trim().split(/\s+/);
+  const lines = [];
+  let currentLine = '';
+
+  words.forEach(word => {
+    if ((currentLine + ' ' + word).trim().length <= maxCharsPerLine) {
+      currentLine = (currentLine + ' ' + word).trim();
+    } else {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    }
+  });
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
+
 http('helloHttp', async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -14,13 +32,14 @@ http('helloHttp', async (req, res) => {
   const tempFiles = [];
 
   try {
-    const { videoUrl } = req.body || {};
+    const { videoUrl, overlayText } = req.body || {};
     if (!videoUrl) {
       return res.status(400).json({ error: 'Missing required videoUrl parameter.' });
     }
 
+    const textToRender = overlayText || 'Default Hook Text';
     const cleanVideoUrl = encodeURI(decodeURI(videoUrl));
-    console.log(`[TEST-RENDER] Downloading video: "${cleanVideoUrl}"`);
+    console.log(`[FFMPEG-RENDER] Downloading video: "${cleanVideoUrl}"`);
 
     const tmpDir = os.tmpdir();
     const ts = Date.now();
@@ -32,10 +51,9 @@ http('helloHttp', async (req, res) => {
     const videoRes = await axios({ url: cleanVideoUrl, method: 'GET', responseType: 'arraybuffer' });
     fs.writeFileSync(inputPath, Buffer.from(videoRes.data));
 
-    // Find custom font file or fallback system monospace font
+    // Resolve Montserrat Font
     let fontPath = path.join(process.cwd(), 'Montserrat-Bold.ttf');
     if (!fs.existsSync(fontPath)) {
-      // Fallback paths on Linux system if custom TTF file isn't uploaded yet
       const systemFonts = [
         '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf',
         '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
@@ -44,22 +62,40 @@ http('helloHttp', async (req, res) => {
       fontPath = systemFonts.find(f => fs.existsSync(f)) || '';
     }
 
-    // Sanitize font path for FFmpeg filter syntax (escape colon and backslashes)
     const escapedFontPath = fontPath ? fontPath.replace(/\\/g, '/').replace(/:/g, '\\:') : '';
     const fontOption = escapedFontPath ? `fontfile='${escapedFontPath}':` : '';
 
-    // Drawtext Filter:
-    // - text='Hi'
-    // - fontsize=36
-    // - borderw=4:bordercolor=black
-    // - Centered horizontally, 72% screen height
-    const simpleFilter = `drawtext=${fontOption}text='Hi':fontsize=36:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=h*0.72`;
+    // Smart Multi-line Text Wrapping
+    const wrappedLines = wrapText(textToRender, 24);
+    const lineFiles = [];
 
-    console.log('[TEST-RENDER] Running simple FFmpeg render with filter:', simpleFilter);
+    // Write each line into a temporary text file to handle special characters cleanly in FFmpeg
+    wrappedLines.forEach((lineStr, index) => {
+      const lineFilePath = path.join(tmpDir, `line_${ts}_${index}.txt`);
+      fs.writeFileSync(lineFilePath, lineStr, 'utf8');
+      tempFiles.push(lineFilePath);
+      lineFiles.push(lineFilePath.replace(/\\/g, '/').replace(/:/g, '\\:'));
+    });
+
+    // Build FFmpeg Drawtext Filters for each line
+    // Fontsize = 36
+    // Black Border = 4px
+    // Horizontal = Centered (x=(w-text_w)/2)
+    // Vertical = Starts at 72% screen height, stacked cleanly line by line
+    const fontSize = 36;
+    const lineHeight = 44; // Spacing between stacked lines
+    const startY = `(h*0.72)`;
+
+    const videoFilters = lineFiles.map((linePath, i) => {
+      const yPos = `${startY}+(${i * lineHeight})`;
+      return `drawtext=${fontOption}textfile='${linePath}':fontsize=${fontSize}:fontcolor=white:borderw=4:bordercolor=black:x=(w-text_w)/2:y=${yPos}`;
+    });
+
+    console.log(`[FFMPEG-RENDER] Rendering ${wrappedLines.length} lines of text with Montserrat font...`);
 
     await new Promise((resolve, reject) => {
       ffmpeg(inputPath)
-        .videoFilters(simpleFilter)
+        .videoFilters(videoFilters)
         .outputOptions([
           '-c:v libx264',
           '-pix_fmt yuv420p',
@@ -74,15 +110,15 @@ http('helloHttp', async (req, res) => {
         .save(outputPath);
     });
 
-    console.log('[TEST-RENDER] Success! Encoding output...');
+    console.log('[FFMPEG-RENDER] Success! Encoding output to Base64...');
     const renderedBuffer = fs.readFileSync(outputPath);
     const base64Video = `data:video/mp4;base64,${renderedBuffer.toString('base64')}`;
 
     return res.status(200).json({ success: true, processedVideoUrl: base64Video });
 
   } catch (err) {
-    console.error('[TEST-RENDER ERROR]:', err);
-    return res.status(500).json({ error: 'Test render failed', details: err.message });
+    console.error('[FFMPEG-RENDER ERROR]:', err);
+    return res.status(500).json({ error: 'FFmpeg rendering failed', details: err.message });
   } finally {
     tempFiles.forEach(f => {
       try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {}
